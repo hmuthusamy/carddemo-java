@@ -1,14 +1,19 @@
 package com.carddemo.controller;
 
 import com.carddemo.model.UserData;
+import com.carddemo.service.UserAddService;
+import com.carddemo.service.UserAlreadyExistsException;
 import com.carddemo.service.UserManagementService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,9 +22,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.stream.Collectors;
 
 /**
  * UserManagementController – Spring Boot REST controller migrated from the
@@ -46,6 +54,32 @@ import java.util.NoSuchElementException;
  * <p>Migrated from: COUSR00C.CBL, COUSR01C.CBL, COUSR02C.CBL, COUSR03C.CBL
  * (CardDemo v1.0-15-g27d6c6f, 2022-07-19)
  */
+/**
+ * UserManagementController – Spring Boot REST controller migrated from the
+ * COBOL/CICS COUSR00C and COUSR01C program families (CU00/CU01 transactions,
+ * USRSEC VSAM file).
+ *
+ * <h2>COBOL → REST Mapping</h2>
+ * <table border="1">
+ *   <tr><th>COBOL Program / Action</th><th>REST Endpoint</th></tr>
+ *   <tr><td>COUSR00C – list users (STARTBR/READNEXT, 10-row page)</td>
+ *       <td>GET  /api/users?page=0&amp;size=10</td></tr>
+ *   <tr><td>COUSR00C – select single user (RIDFLD READ)</td>
+ *       <td>GET  /api/users/{userId}</td></tr>
+ *   <tr><td>COUSR01C – add new user (EXEC CICS WRITE) [COUSR01C migration]</td>
+ *       <td>POST /api/users  → delegates to {@link UserAddService}</td></tr>
+ *   <tr><td>COUSR02C – update user (EXEC CICS REWRITE, sel flag 'U')</td>
+ *       <td>PUT  /api/users/{userId}</td></tr>
+ *   <tr><td>COUSR03C – delete user (EXEC CICS DELETE, sel flag 'D')</td>
+ *       <td>DELETE /api/users/{userId}</td></tr>
+ * </table>
+ *
+ * <p>All operations require {@code ROLE_ADMIN}, mirroring the original COBOL
+ * CU00/CU01 transactions that were restricted to admin terminal users.
+ *
+ * <p>Migrated from: COUSR00C.CBL, COUSR01C.CBL, COUSR02C.CBL, COUSR03C.CBL
+ * (CardDemo v1.0-15-g27d6c6f, 2022-07-19)
+ */
 @RestController
 @RequestMapping("/api/users")
 @PreAuthorize("hasRole('ADMIN')")
@@ -53,8 +87,13 @@ public class UserManagementController {
 
     private final UserManagementService userManagementService;
 
-    public UserManagementController(UserManagementService userManagementService) {
+    /** COUSR01C-specific service: all PROCESS-ENTER-KEY validations + WRITE logic. */
+    private final UserAddService userAddService;
+
+    public UserManagementController(UserManagementService userManagementService,
+                                    UserAddService userAddService) {
         this.userManagementService = userManagementService;
+        this.userAddService        = userAddService;
     }
 
     // -----------------------------------------------------------------------
@@ -110,32 +149,41 @@ public class UserManagementController {
     /**
      * Creates a new user account.
      *
-     * <p>Replaces COUSR01C which wrote a new record to the USRSEC VSAM file.
-     * Returns 409 Conflict if the userId already exists (was COBOL RESP=DUPREC).
+     * <p>Delegates to {@link UserAddService#addUser} which faithfully reproduces
+     * every validation rule from COUSR01C paragraph {@code PROCESS-ENTER-KEY}
+     * and the duplicate-key logic from {@code WRITE-USER-SEC-FILE}.
      *
-     * <p>Request body includes a plain-text {@code password} field that is
-     * BCrypt-encoded before storage (COBOL stored plaintext in SEC-USR-PWD PIC X(08)).
+     * <p>HTTP status mapping:
+     * <ul>
+     *   <li>201 Created   – COBOL DFHRESP(NORMAL) → "User &lt;id&gt; has been added ..."</li>
+     *   <li>400 Bad Request – blank field validation (COBOL "…can NOT be empty…")</li>
+     *   <li>409 Conflict  – COBOL DFHRESP(DUPKEY/DUPREC) → "User ID already exist..."</li>
+     * </ul>
      *
-     * @param request CreateUserRequest carrying user fields + plain password
-     * @return 201 Created with the saved UserData
+     * @param request validated request body (BMS map field equivalents)
+     * @return 201 Created with the persisted user (password not returned)
      */
     @PostMapping
-    public ResponseEntity<UserData> createUser(
-            @Valid @RequestBody CreateUserRequest request) {
+    public ResponseEntity<Map<String, Object>> createUser(
+            @Valid @RequestBody AddUserRequest request) {
 
-        try {
-            UserData user = new UserData();
-            user.setUserId(request.userId());
-            user.setFirstName(request.firstName());
-            user.setLastName(request.lastName());
-            user.setUserType(request.userType());
+        UserData saved = userAddService.addUser(
+                request.userId(),
+                request.firstName(),
+                request.lastName(),
+                request.password(),
+                request.userType()
+        );
 
-            UserData saved = userManagementService.createUser(user, request.password());
-            return ResponseEntity.status(HttpStatus.CREATED).body(saved);
-
-        } catch (IllegalArgumentException ex) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage());
-        }
+        // COBOL success message: "User <id> has been added ..."
+        Map<String, Object> body = Map.of(
+                "message",   "User " + saved.getUserId() + " has been added ...",
+                "userId",    saved.getUserId(),
+                "firstName", saved.getFirstName(),
+                "lastName",  saved.getLastName(),
+                "userType",  saved.getUserType()
+        );
+        return ResponseEntity.status(HttpStatus.CREATED).body(body);
     }
 
     // -----------------------------------------------------------------------
@@ -196,28 +244,77 @@ public class UserManagementController {
     }
 
     // -----------------------------------------------------------------------
-    // Inner DTO – CreateUserRequest
+    // Exception handlers (COUSR01C-specific)
     // -----------------------------------------------------------------------
 
     /**
-     * Request body for POST /api/users.
-     * Separates the plain-text password field from the UserData entity so that
-     * passwords are never serialised back in responses.
+     * COBOL: DFHRESP(DUPKEY) / DFHRESP(DUPREC)
+     * → "User ID already exist..." → HTTP 409 Conflict
+     */
+    @ExceptionHandler(UserAlreadyExistsException.class)
+    public ResponseEntity<Map<String, String>> handleDuplicate(
+            UserAlreadyExistsException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", "DUPLICATE_USER", "message", ex.getMessage()));
+    }
+
+    /**
+     * COBOL: blank-field EVALUATE WHEN checks in PROCESS-ENTER-KEY
+     * → HTTP 400 Bad Request
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> handleValidation(
+            IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", "VALIDATION_ERROR", "message", ex.getMessage()));
+    }
+
+    /** Bean-validation constraint failures → HTTP 400 Bad Request */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, String>> handleBeanValidation(
+            MethodArgumentNotValidException ex) {
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
+                .collect(Collectors.joining("; "));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", "VALIDATION_ERROR", "message", message));
+    }
+
+    // -----------------------------------------------------------------------
+    // Inner DTO – AddUserRequest  (COUSR01C BMS map fields)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Request body for POST /api/users (COUSR01C – transaction CU01).
      *
-     * <p>Mirrors COBOL COUSR01C input fields:
+     * <p>Mirrors the COUSR01C BMS map input fields (copybook COUSR01):
      * <pre>
-     *   SEC-USR-ID    → userId    (PIC X(08))
-     *   SEC-USR-FNAME → firstName (PIC X(20))
-     *   SEC-USR-LNAME → lastName  (PIC X(20))
-     *   SEC-USR-PWD   → password  (PIC X(08), stored BCrypt-hashed)
-     *   SEC-USR-TYPE  → userType  (PIC X(01): 'A' or 'U')
+     *   USERIDI  → userId    (SEC-USR-ID    PIC X(08))
+     *   FNAMEI   → firstName (SEC-USR-FNAME PIC X(20))
+     *   LNAMEI   → lastName  (SEC-USR-LNAME PIC X(20))
+     *   PASSWDI  → password  (SEC-USR-PWD   PIC X(08), BCrypt-encoded on write)
+     *   USRTYPEI → userType  (SEC-USR-TYPE  PIC X(01): 'R'=Regular / 'A'=Admin)
      * </pre>
      */
-    public record CreateUserRequest(
-            @NotBlank String userId,
+    public record AddUserRequest(
+            @NotBlank(message = "User ID can NOT be empty...")
+            @Size(max = 8, message = "User ID must not exceed 8 characters (SEC-USR-ID PIC X(08))")
+            String userId,
+
+            @NotBlank(message = "First Name can NOT be empty...")
+            @Size(max = 20, message = "First name must not exceed 20 characters (SEC-USR-FNAME PIC X(20))")
             String firstName,
+
+            @NotBlank(message = "Last Name can NOT be empty...")
+            @Size(max = 20, message = "Last name must not exceed 20 characters (SEC-USR-LNAME PIC X(20))")
             String lastName,
-            @NotBlank String password,
-            @NotBlank String userType
+
+            @NotBlank(message = "Password can NOT be empty...")
+            String password,
+
+            @NotBlank(message = "User Type can NOT be empty...")
+            @Pattern(regexp = "[RAra]",
+                     message = "User Type must be 'R' (Regular) or 'A' (Admin)")
+            String userType
     ) {}
 }

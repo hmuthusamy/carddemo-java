@@ -1,6 +1,8 @@
 package com.carddemo.controller;
 
 import com.carddemo.model.UserData;
+import com.carddemo.service.UserAddService;
+import com.carddemo.service.UserAlreadyExistsException;
 import com.carddemo.service.UserManagementService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,15 +34,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * UserManagementControllerTest – unit tests for the Spring Boot REST controller
- * that was migrated from COBOL/CICS COUSR00C program family.
+ * UserManagementControllerTest – integration tests for the Spring Boot REST
+ * controller migrated from COBOL/CICS COUSR00C and COUSR01C program families.
  *
  * <h2>Test Coverage</h2>
  * Each test maps to the corresponding COBOL function that was migrated:
  * <ul>
  *   <li>COUSR00C STARTBR/READNEXT → GET /api/users (paginated list)
  *   <li>COUSR00C READ RIDFLD      → GET /api/users/{userId}
- *   <li>COUSR01C WRITE            → POST /api/users
+ *   <li>COUSR01C WRITE (CU01)     → POST /api/users → delegates to {@code UserAddService}
  *   <li>COUSR02C REWRITE (sel 'U')→ PUT  /api/users/{userId}
  *   <li>COUSR03C DELETE  (sel 'D')→ DELETE /api/users/{userId}
  *   <li>Security: 403 for non-ADMIN roles
@@ -55,6 +57,10 @@ class UserManagementControllerTest {
 
     @MockBean
     private UserManagementService userManagementService;
+
+    /** COUSR01C-specific add-user service (required since COUSR01C migration). */
+    @MockBean
+    private UserAddService userAddService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -160,20 +166,22 @@ class UserManagementControllerTest {
     }
 
     // -----------------------------------------------------------------------
-    // POST /api/users – COUSR01C EXEC CICS WRITE DATASET('USRSEC')
+    // POST /api/users – COUSR01C EXEC CICS WRITE (transaction CU01)
+    // Delegates to UserAddService (COUSR01C-specific service)
     // -----------------------------------------------------------------------
 
     @Test
     @WithMockUser(roles = "ADMIN")
-    @DisplayName("POST /api/users – valid request creates user, returns 201 (COUSR01C WRITE)")
+    @DisplayName("POST /api/users – valid request creates user, returns 201 (COUSR01C WRITE NORMAL)")
     void createUser_validRequest_returns201() throws Exception {
-        UserManagementController.CreateUserRequest req =
-                new UserManagementController.CreateUserRequest(
-                        "NEWUSR01", "Carol", "Jones", "Secret1!", "U");
+        // Mirrors COUSR01C PROCESS-ENTER-KEY valid input
+        UserManagementController.AddUserRequest req =
+                new UserManagementController.AddUserRequest(
+                        "NEWUSR01", "Carol", "Jones", "Secret1!", "R");
 
         UserData saved = new UserData("NEWUSR01", "Carol", "Jones",
-                                      "$2a$10$encoded", "U");
-        when(userManagementService.createUser(any(UserData.class), eq("Secret1!")))
+                                      "$2a$10$encoded", "R");
+        when(userAddService.addUser("NEWUSR01", "Carol", "Jones", "Secret1!", "R"))
                 .thenReturn(saved);
 
         mockMvc.perform(post("/api/users")
@@ -182,25 +190,48 @@ class UserManagementControllerTest {
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.userId",   is("NEWUSR01")))
-                .andExpect(jsonPath("$.lastName", is("Jones")));
+                .andExpect(jsonPath("$.lastName", is("Jones")))
+                .andExpect(jsonPath("$.message",  containsString("has been added")));
+
+        verify(userAddService).addUser("NEWUSR01", "Carol", "Jones", "Secret1!", "R");
     }
 
     @Test
     @WithMockUser(roles = "ADMIN")
-    @DisplayName("POST /api/users – duplicate userId returns 409 (COBOL DUPREC)")
+    @DisplayName("POST /api/users – duplicate userId returns 409 (COUSR01C DFHRESP DUPKEY/DUPREC)")
     void createUser_duplicateId_returns409() throws Exception {
-        UserManagementController.CreateUserRequest req =
-                new UserManagementController.CreateUserRequest(
+        // COBOL: WHEN DFHRESP(DUPKEY) / WHEN DFHRESP(DUPREC)
+        //   MOVE 'User ID already exist...' TO WS-MESSAGE
+        UserManagementController.AddUserRequest req =
+                new UserManagementController.AddUserRequest(
                         "ADMIN001", "Dup", "User", "pass", "A");
 
-        when(userManagementService.createUser(any(UserData.class), anyString()))
-                .thenThrow(new IllegalArgumentException("User ID already exists: ADMIN001"));
+        when(userAddService.addUser(eq("ADMIN001"), anyString(), anyString(),
+                                    anyString(), anyString()))
+                .thenThrow(new UserAlreadyExistsException("ADMIN001"));
 
         mockMvc.perform(post("/api/users")
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isConflict());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error", is("DUPLICATE_USER")));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    @DisplayName("POST /api/users – blank userId returns 400 (COUSR01C: User ID can NOT be empty...)")
+    void createUser_blankUserId_returns400() throws Exception {
+        // COBOL: WHEN USERIDI = SPACES OR LOW-VALUES
+        //   MOVE 'User ID can NOT be empty...' TO WS-MESSAGE
+        String badJson = "{\"userId\":\"\",\"firstName\":\"A\",\"lastName\":\"B\","
+                       + "\"password\":\"pw\",\"userType\":\"R\"}";
+
+        mockMvc.perform(post("/api/users")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(badJson))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -208,7 +239,21 @@ class UserManagementControllerTest {
     @DisplayName("POST /api/users – missing required fields returns 400")
     void createUser_missingFields_returns400() throws Exception {
         // userId is blank – violates @NotBlank
-        String badJson = "{\"userId\":\"\",\"password\":\"pw\",\"userType\":\"U\"}";
+        String badJson = "{\"userId\":\"\",\"password\":\"pw\",\"userType\":\"R\"}";
+
+        mockMvc.perform(post("/api/users")
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(badJson))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    @DisplayName("POST /api/users – invalid userType returns 400 (COUSR01C role validation)")
+    void createUser_invalidUserType_returns400() throws Exception {
+        String badJson = "{\"userId\":\"USR00001\",\"firstName\":\"A\",\"lastName\":\"B\","
+                       + "\"password\":\"pw\",\"userType\":\"X\"}";
 
         mockMvc.perform(post("/api/users")
                         .with(csrf())
