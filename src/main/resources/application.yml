@@ -32,3 +32,11 @@ logging:
   level:
     com.carddemo: INFO
     org.springframework: WARN
+
+# JWT configuration — replaces RACF token-based authentication.
+# COBOL COSGN00C verified: SEC-USR-TYPE 'A' = ADMIN, 'U' = USER (COCOM01Y.cpy)
+carddemo:
+  jwt:
+    # Base64-encoded 256-bit secret; override via JWT_SECRET env var in production
+    secret: ${JWT_SECRET:Y2FyZGRlbW8tc2VjcmV0LWtleS1mb3ItaHMyNTYtbXVzdC1iZS1hdC1sZWFzdC0zMi1jaGFycw==}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}   # 24 hours
