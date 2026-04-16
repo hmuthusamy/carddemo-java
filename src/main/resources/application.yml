@@ -2,7 +2,7 @@ spring:
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/carddemo}
     username: ${SPRING_DATASOURCE_USERNAME:carddemo}
-    password: ${SPRING_DATASOURCE_PASSWORD:changeme}
+    password: ${SPRING_DATASOURCE_PASSWORD:replace-in-production}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -27,6 +27,11 @@ spring:
 
 server:
   port: 8080
+
+security:
+  jwt:
+    secret: ${JWT_SECRET:replace-in-production}
+    expiration-ms: ${JWT_EXPIRATION_MS:3600000}
 
 logging:
   level:
