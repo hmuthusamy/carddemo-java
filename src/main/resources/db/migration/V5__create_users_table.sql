@@ -2,43 +2,53 @@
 -- V5__create_users_table.sql
 -- Flyway migration: Create 'users' table
 --
--- Source: Application security model (COBOL USRSEC / sign-on program COSGN00C)
--- No direct VSAM KSDS copybook — derived from CardDemo security requirements
--- and standard Spring Security UserDetails contract.
+-- Source: CardDemo application security model (COSGN00C sign-on program)
+-- No direct VSAM KSDS copybook — derived from application security requirements.
 --
--- COBOL → PostgreSQL type mapping:
---   User ID (PIC X(08) in COBOL sign-on screens) → VARCHAR(8)  (user_id — PK)
---   Password (hashed, no length from COBOL)       → VARCHAR(60) (BCrypt hash)
---   Role (admin/regular user)                      → VARCHAR(10)
---   Status (active/inactive)                        → CHAR(1)
---   Name fields                                     → VARCHAR(25) (matching CVCUS01Y)
+-- COBOL → PostgreSQL → Java entity type mapping (com.carddemo.model.User):
+--   user_id       (auto-generated) → BIGSERIAL    → Long    userId     (PK, @GeneratedValue IDENTITY)
+--   username      VARCHAR(50)      → VARCHAR(50)  → String  username   (UNIQUE)
+--   password_hash VARCHAR(256)     → VARCHAR(256) → String  passwordHash
+--   role          VARCHAR(20)      → VARCHAR(20)  → String  role
+--   status        CHAR(1)          → CHAR(1)      → String  status
+--   first_name    VARCHAR(25)      → VARCHAR(25)  → String  firstName  (matches CUST-FIRST-NAME PIC X(25))
+--   last_name     VARCHAR(25)      → VARCHAR(25)  → String  lastName   (matches CUST-LAST-NAME PIC X(25))
 --
--- Java entity: com.carddemo.model.User  (Spring Security UserDetails)
---   String  ← VARCHAR/CHAR
+-- Note: user_id is a BIGSERIAL surrogate PK (auto-generated identity), not from COBOL.
+--       password_hash is VARCHAR(256) to accommodate BCrypt (60 chars) and Argon2 hashes.
+--       role is VARCHAR(20) to hold Spring Security role strings (e.g., 'ADMIN', 'USER').
+--       status A=active, I=inactive, L=locked (maps to COBOL USRTYP status codes).
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS users (
-    -- User login identifier (matches COBOL sign-on screen field USER-ID PIC X(08))
-    user_id                 VARCHAR(8)      NOT NULL,
+    -- Auto-generated surrogate PK (no corresponding COBOL KSDS key)
+    -- Java: @Id @GeneratedValue(strategy=IDENTITY) Long userId
+    user_id                 BIGSERIAL       NOT NULL,
 
-    -- Application username / login name (may differ from user_id)
+    -- Unique application login name
+    -- Java: String username  (@Column unique=true, length=50)
     username                VARCHAR(50)     NOT NULL,
 
-    -- BCrypt-hashed password (BCrypt hash is always 60 characters)
-    password_hash           VARCHAR(60)     NOT NULL,
+    -- BCrypt or Argon2 password hash (BCrypt = 60 chars; Argon2 up to ~100 chars)
+    -- Java: String passwordHash  (@Column name="password_hash", length=256)
+    password_hash           VARCHAR(256)    NOT NULL,
 
-    -- Role: 'ADMIN' or 'USER' (maps to COBOL USRTYP-CD)
-    role                    VARCHAR(10)     NOT NULL DEFAULT 'USER'
+    -- Spring Security role string — e.g., 'ADMIN', 'USER'
+    -- Java: String role  (@Column name="role", length=20)
+    role                    VARCHAR(20)     NOT NULL DEFAULT 'USER'
                                 CONSTRAINT chk_users_role CHECK (role IN ('ADMIN', 'USER')),
 
-    -- Account status flag: Y=active, N=inactive/locked
-    status                  CHAR(1)         NOT NULL DEFAULT 'Y'
-                                CONSTRAINT chk_users_status CHECK (status IN ('Y', 'N')),
+    -- Account status: A=active, I=inactive, L=locked
+    -- Java: String status  (@Column name="status", length=1)
+    status                  CHAR(1)         NOT NULL DEFAULT 'A'
+                                CONSTRAINT chk_users_status CHECK (status IN ('A', 'I', 'L')),
 
-    -- First name — VARCHAR(25) matching CUST-FIRST-NAME PIC X(25) in CVCUS01Y
+    -- First name — VARCHAR(25) matching CUST-FIRST-NAME PIC X(25) from CVCUS01Y
+    -- Java: String firstName  (@Column name="first_name", length=25)
     first_name              VARCHAR(25)     NOT NULL DEFAULT '',
 
-    -- Last name — VARCHAR(25) matching CUST-LAST-NAME PIC X(25) in CVCUS01Y
+    -- Last name — VARCHAR(25) matching CUST-LAST-NAME PIC X(25) from CVCUS01Y
+    -- Java: String lastName  (@Column name="last_name", length=25)
     last_name               VARCHAR(25)     NOT NULL DEFAULT '',
 
     -- Audit columns
@@ -48,23 +58,23 @@ CREATE TABLE IF NOT EXISTS users (
     -- PRIMARY KEY
     CONSTRAINT pk_users PRIMARY KEY (user_id),
 
-    -- username must be unique (login uniqueness)
+    -- username must be unique
     CONSTRAINT uq_users_username UNIQUE (username)
 );
 
--- Index to support role-based queries (e.g., list all admins)
+-- Index for role-based queries
 CREATE INDEX IF NOT EXISTS idx_users_role
     ON users (role);
 
--- Index to support status filtering (e.g., active users only)
+-- Index for status-based filtering (e.g., active users only)
 CREATE INDEX IF NOT EXISTS idx_users_status
     ON users (status);
 
-COMMENT ON TABLE  users               IS 'Application user accounts for CardDemo authentication and authorisation';
-COMMENT ON COLUMN users.user_id       IS 'User login identifier — matches COBOL USER-ID PIC X(08)';
-COMMENT ON COLUMN users.username      IS 'Display username — unique login name';
-COMMENT ON COLUMN users.password_hash IS 'BCrypt-hashed password (60-character hash)';
-COMMENT ON COLUMN users.role          IS 'Application role: ADMIN or USER — maps to COBOL USRTYP-CD';
-COMMENT ON COLUMN users.status        IS 'Account status: Y=active, N=inactive/locked';
-COMMENT ON COLUMN users.first_name    IS 'First name — VARCHAR(25) matching CUST-FIRST-NAME PIC X(25)';
-COMMENT ON COLUMN users.last_name     IS 'Last name — VARCHAR(25) matching CUST-LAST-NAME PIC X(25)';
+COMMENT ON TABLE  users               IS 'Application user accounts — CardDemo authentication and authorisation (COSGN00C)';
+COMMENT ON COLUMN users.user_id       IS 'Auto-generated surrogate PK (BIGSERIAL); Java: Long userId @GeneratedValue(IDENTITY)';
+COMMENT ON COLUMN users.username      IS 'Unique login name; Java: String username VARCHAR(50)';
+COMMENT ON COLUMN users.password_hash IS 'BCrypt/Argon2 encoded password; Java: String passwordHash VARCHAR(256)';
+COMMENT ON COLUMN users.role          IS 'Spring Security role: ADMIN or USER; Java: String role VARCHAR(20)';
+COMMENT ON COLUMN users.status        IS 'Account status: A=active, I=inactive, L=locked; Java: String status CHAR(1)';
+COMMENT ON COLUMN users.first_name    IS 'User first name — matches CUST-FIRST-NAME PIC X(25); Java: String firstName VARCHAR(25)';
+COMMENT ON COLUMN users.last_name     IS 'User last name — matches CUST-LAST-NAME PIC X(25); Java: String lastName VARCHAR(25)';

@@ -4,28 +4,26 @@
 --
 -- Source COBOL copybook: CVACT03Y.cpy  (CARD-XREF-RECORD, RECLN 50)
 -- VSAM KSDS primary key: XREF-CARD-NUM
--- Purpose: Cross-reference between card numbers, customer IDs, and account IDs
---          (implements the VSAM alternate-index relationship kept in CARDXREF)
+-- Purpose: Links card numbers to their owning customer and account,
+--          preserving the VSAM alternate-index relationship in CARDXREF.
 --
--- COBOL → PostgreSQL type mapping:
---   PIC X(16)    → CHAR(16)   (xref_card_num — PK & FK to cards)
---   PIC 9(09)    → INTEGER    (xref_cust_id   — FK to customers)
---   PIC 9(11)    → BIGINT     (xref_acct_id   — FK to accounts)
---
--- Java entity: com.carddemo.model.CardAccountXref
---   String   ← CHAR(16)
---   Integer  ← INTEGER
---   Long     ← BIGINT
+-- COBOL → PostgreSQL → Java entity type mapping (com.carddemo.model.CardAccountXref):
+--   XREF-CARD-NUM  PIC X(16)  → VARCHAR(16)  → String   cardNumber   (PK & FK→cards)
+--   XREF-CUST-ID   PIC 9(09)  → INTEGER      → Integer  customerId   (FK→customers)
+--   XREF-ACCT-ID   PIC 9(11)  → BIGINT       → Long     accountId    (FK→accounts)
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS card_account_xref (
     -- XREF-CARD-NUM  PIC X(16)  — VSAM KSDS primary key
-    card_number             CHAR(16)        NOT NULL,
+    -- Java: @Id String cardNumber  (@Column name="card_number", length=16)
+    card_number             VARCHAR(16)     NOT NULL,
 
-    -- XREF-CUST-ID   PIC 9(09)  — customer associated with this card
+    -- XREF-CUST-ID  PIC 9(09)  — customer associated with this card
+    -- Java: Integer customerId  (@Column name="customer_id")
     customer_id             INTEGER         NOT NULL,
 
-    -- XREF-ACCT-ID   PIC 9(11)  — account associated with this card
+    -- XREF-ACCT-ID  PIC 9(11)  — account associated with this card
+    -- Java: Long accountId  (@Column name="account_id")
     account_id              BIGINT          NOT NULL,
 
     -- Audit columns
@@ -69,7 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_xref_customer_id
 CREATE INDEX IF NOT EXISTS idx_xref_customer_account
     ON card_account_xref (customer_id, account_id);
 
-COMMENT ON TABLE  card_account_xref             IS 'Card–Customer–Account cross-reference — migrated from VSAM KSDS CARDXREF (CVACT03Y)';
-COMMENT ON COLUMN card_account_xref.card_number IS 'XREF-CARD-NUM PIC X(16) — VSAM KSDS primary key; FK to cards.card_number';
-COMMENT ON COLUMN card_account_xref.customer_id IS 'XREF-CUST-ID PIC 9(09) — FK to customers.customer_id';
-COMMENT ON COLUMN card_account_xref.account_id  IS 'XREF-ACCT-ID PIC 9(11) — FK to accounts.account_id';
+COMMENT ON TABLE  card_account_xref             IS 'Card-Customer-Account cross-reference — migrated from VSAM KSDS CARDXREF (CVACT03Y)';
+COMMENT ON COLUMN card_account_xref.card_number IS 'XREF-CARD-NUM PIC X(16) — VSAM KSDS PK; FK to cards.card_number; Java: String cardNumber VARCHAR(16)';
+COMMENT ON COLUMN card_account_xref.customer_id IS 'XREF-CUST-ID PIC 9(09) — FK to customers.customer_id; Java: Integer customerId';
+COMMENT ON COLUMN card_account_xref.account_id  IS 'XREF-ACCT-ID PIC 9(11) — FK to accounts.account_id; Java: Long accountId';
