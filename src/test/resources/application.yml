@@ -1,0 +1,78 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=false;MODE=PostgreSQL
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+  flyway:
+    enabled: false
+
+  batch:
+    job:
+      enabled: false
+    jdbc:
+      initialize-schema: always
+    tranfile:
+      path: /tmp/tranfile.dat
+    dalytran:
+      path: /tmp/dalytran.dat
+    dalyrejs:
+      path: /tmp/dalyrejs.dat
+    tcatbalf:
+      path: /tmp/tcatbalf.dat
+    xreffile:
+      path: /tmp/xreffile.dat
+    xreffil1:
+      path: /tmp/xreffil1.dat
+    acctfile:
+      path: /tmp/acctfile.dat
+    discgrp:
+      path: /tmp/discgrp.dat
+    transact:
+      path: /tmp/transact.dat
+    cardxref:
+      path: /tmp/cardxref.dat
+    trantype:
+      path: /tmp/trantype.dat
+    trancatg:
+      path: /tmp/trancatg.dat
+    dateparm:
+      path: /tmp/dateparm.dat
+    tranrept:
+      path: /tmp/tranrept.dat
+    trnxfile:
+      path: /tmp/trnxfile.dat
+    custfile:
+      path: /tmp/custfile.dat
+    stmtfile:
+      path: /tmp/stmtfile.txt
+    htmlfile:
+      path: /tmp/htmlfile.html
+    cardfile:
+      path: /tmp/cardfile.dat
+    expfile:
+      path: /tmp/expfile.dat
+    custout:
+      path: /tmp/custout.dat
+    acctout:
+      path: /tmp/acctout.dat
+    xrefout:
+      path: /tmp/xrefout.dat
+    trnxout:
+      path: /tmp/trnxout.dat
+    errout:
+      path: /tmp/errout.dat
+
+logging:
+  level:
+    com.carddemo: DEBUG
+    org.springframework: WARN

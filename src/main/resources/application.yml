@@ -25,6 +25,141 @@ spring:
     jdbc:
       initialize-schema: always
 
+    # -------------------------------------------------------------------------
+    # JCL DD NAME= → Spring property mappings
+    #
+    # Each property below corresponds to a JCL DD statement from the mainframe
+    # CardDemo job streams.  The mainframe DSN is shown as a comment.
+    # Override the paths for your target environment via environment variables
+    # or an external application.yml.
+    # -------------------------------------------------------------------------
+
+    # --- POSTTRAN.jcl / TRANREPT.jcl : DD NAME=TRANFILE ----------------------
+    # DSN=AWS.M2.CARDDEMO.TRANSACT.VSAM.KSDS
+    tranfile:
+      path: ${BATCH_TRANFILE_PATH:/data/carddemo/transact.dat}
+
+    # --- POSTTRAN.jcl : DD NAME=DALYTRAN -------------------------------------
+    # DSN=AWS.M2.CARDDEMO.DALYTRAN.PS
+    dalytran:
+      path: ${BATCH_DALYTRAN_PATH:/data/carddemo/dalytran.dat}
+
+    # --- POSTTRAN.jcl : DD NAME=DALYREJS (output GDG) -------------------------
+    # DSN=AWS.M2.CARDDEMO.DALYREJS(+1)
+    dalyrejs:
+      path: ${BATCH_DALYREJS_PATH:/data/carddemo/output/dalyrejs.dat}
+
+    # --- POSTTRAN.jcl / INTCALC.jcl : DD NAME=TCATBALF -----------------------
+    # DSN=AWS.M2.CARDDEMO.TCATBALF.VSAM.KSDS
+    tcatbalf:
+      path: ${BATCH_TCATBALF_PATH:/data/carddemo/tcatbalf.dat}
+
+    # --- POSTTRAN / INTCALC / CREASTMT / CBEXPORT : DD NAME=XREFFILE ---------
+    # DSN=AWS.M2.CARDDEMO.CARDXREF.VSAM.KSDS
+    xreffile:
+      path: ${BATCH_XREFFILE_PATH:/data/carddemo/cardxref.dat}
+
+    # --- INTCALC.jcl : DD NAME=XREFFIL1 (alternate index path) ---------------
+    # DSN=AWS.M2.CARDDEMO.CARDXREF.VSAM.AIX.PATH
+    xreffil1:
+      path: ${BATCH_XREFFIL1_PATH:/data/carddemo/cardxref-aix.dat}
+
+    # --- POSTTRAN / INTCALC / CREASTMT / CBEXPORT : DD NAME=ACCTFILE ---------
+    # DSN=AWS.M2.CARDDEMO.ACCTDATA.VSAM.KSDS
+    acctfile:
+      path: ${BATCH_ACCTFILE_PATH:/data/carddemo/acctdata.dat}
+
+    # --- INTCALC.jcl : DD NAME=DISCGRP ----------------------------------------
+    # DSN=AWS.M2.CARDDEMO.DISCGRP.VSAM.KSDS
+    discgrp:
+      path: ${BATCH_DISCGRP_PATH:/data/carddemo/discgrp.dat}
+
+    # --- INTCALC / CBEXPORT : DD NAME=TRANSACT --------------------------------
+    # DSN=AWS.M2.CARDDEMO.TRANSACT.VSAM.KSDS  (CBEXPORT input)
+    # DSN=AWS.M2.CARDDEMO.SYSTRAN(+1)          (INTCALC output GDG)
+    transact:
+      path: ${BATCH_TRANSACT_PATH:/data/carddemo/transact-vsam.dat}
+
+    # --- TRANREPT.jcl : DD NAME=CARDXREF -------------------------------------
+    # DSN=AWS.M2.CARDDEMO.CARDXREF.VSAM.KSDS
+    cardxref:
+      path: ${BATCH_CARDXREF_PATH:/data/carddemo/cardxref.dat}
+
+    # --- TRANREPT.jcl : DD NAME=TRANTYPE -------------------------------------
+    # DSN=AWS.M2.CARDDEMO.TRANTYPE.VSAM.KSDS
+    trantype:
+      path: ${BATCH_TRANTYPE_PATH:/data/carddemo/trantype.dat}
+
+    # --- TRANREPT.jcl : DD NAME=TRANCATG -------------------------------------
+    # DSN=AWS.M2.CARDDEMO.TRANCATG.VSAM.KSDS
+    trancatg:
+      path: ${BATCH_TRANCATG_PATH:/data/carddemo/trancatg.dat}
+
+    # --- TRANREPT.jcl : DD NAME=DATEPARM -------------------------------------
+    # DSN=AWS.M2.CARDDEMO.DATEPARM
+    dateparm:
+      path: ${BATCH_DATEPARM_PATH:/data/carddemo/dateparm.dat}
+
+    # --- TRANREPT.jcl : DD NAME=TRANREPT (output GDG) ------------------------
+    # DSN=AWS.M2.CARDDEMO.TRANREPT(+1)
+    tranrept:
+      path: ${BATCH_TRANREPT_PATH:/data/carddemo/output/tranrept.dat}
+
+    # --- CREASTMT.JCL : DD NAME=TRNXFILE -------------------------------------
+    # DSN=AWS.M2.CARDDEMO.TRXFL.VSAM.KSDS
+    trnxfile:
+      path: ${BATCH_TRNXFILE_PATH:/data/carddemo/trxfl.dat}
+
+    # --- CREASTMT / CBEXPORT : DD NAME=CUSTFILE ------------------------------
+    # DSN=AWS.M2.CARDDEMO.CUSTDATA.VSAM.KSDS
+    custfile:
+      path: ${BATCH_CUSTFILE_PATH:/data/carddemo/custdata.dat}
+
+    # --- CREASTMT.JCL : DD NAME=STMTFILE (output) ----------------------------
+    # DSN=AWS.M2.CARDDEMO.STATEMNT.PS
+    stmtfile:
+      path: ${BATCH_STMTFILE_PATH:/data/carddemo/output/statemnt.txt}
+
+    # --- CREASTMT.JCL : DD NAME=HTMLFILE (output) ----------------------------
+    # DSN=AWS.M2.CARDDEMO.STATEMNT.HTML
+    htmlfile:
+      path: ${BATCH_HTMLFILE_PATH:/data/carddemo/output/statemnt.html}
+
+    # --- CBEXPORT.jcl : DD NAME=CARDFILE -------------------------------------
+    # DSN=AWS.M2.CARDDEMO.CARDDATA.VSAM.KSDS
+    cardfile:
+      path: ${BATCH_CARDFILE_PATH:/data/carddemo/carddata.dat}
+
+    # --- CBEXPORT / CBIMPORT : DD NAME=EXPFILE --------------------------------
+    # DSN=AWS.M2.CARDDEMO.EXPORT.DATA
+    expfile:
+      path: ${BATCH_EXPFILE_PATH:/data/carddemo/export.dat}
+
+    # --- CBIMPORT.jcl : DD NAME=CUSTOUT (output) -----------------------------
+    # DSN=AWS.M2.CARDDEMO.CUSTDATA.IMPORT
+    custout:
+      path: ${BATCH_CUSTOUT_PATH:/data/carddemo/output/custdata-import.dat}
+
+    # --- CBIMPORT.jcl : DD NAME=ACCTOUT (output) -----------------------------
+    # DSN=AWS.M2.CARDDEMO.ACCTDATA.IMPORT
+    acctout:
+      path: ${BATCH_ACCTOUT_PATH:/data/carddemo/output/acctdata-import.dat}
+
+    # --- CBIMPORT.jcl : DD NAME=XREFOUT (output) -----------------------------
+    # DSN=AWS.M2.CARDDEMO.CARDXREF.IMPORT
+    xrefout:
+      path: ${BATCH_XREFOUT_PATH:/data/carddemo/output/cardxref-import.dat}
+
+    # --- CBIMPORT.jcl : DD NAME=TRNXOUT (output) -----------------------------
+    # DSN=AWS.M2.CARDDEMO.TRANSACT.IMPORT
+    trnxout:
+      path: ${BATCH_TRNXOUT_PATH:/data/carddemo/output/transact-import.dat}
+
+    # --- CBIMPORT.jcl : DD NAME=ERROUT (output) ------------------------------
+    # DSN=AWS.M2.CARDDEMO.IMPORT.ERRORS
+    errout:
+      path: ${BATCH_ERROUT_PATH:/data/carddemo/output/import-errors.dat}
+
 server:
   port: 8080
 
