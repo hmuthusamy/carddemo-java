@@ -1,0 +1,33 @@
+# Test configuration — overrides application.yml for unit tests
+# Uses H2 in-memory database so no PostgreSQL is needed at test time.
+spring:
+  datasource:
+    url: jdbc:h2:mem:carddemo_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+  flyway:
+    enabled: false   # Flyway migrations use PostgreSQL DDL; H2 uses ddl-auto instead
+
+  batch:
+    job:
+      enabled: false
+
+  security:
+    user:
+      name: test
+      password: test
+
+logging:
+  level:
+    com.carddemo: DEBUG
+    org.springframework: WARN
