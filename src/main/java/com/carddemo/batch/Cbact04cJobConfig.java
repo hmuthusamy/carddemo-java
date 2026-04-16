@@ -38,6 +38,16 @@ import java.util.List;
  * PARM-DATE from LINKAGE SECTION         Spring Batch JobParameter  "runDate"
  * </pre>
  *
+ * <h2>Entity model</h2>
+ * <ul>
+ *   <li>{@link com.carddemo.model.CardData} (CVACT02Y) – full card master record
+ *       (card number, account ID, CVV, embossed name, expiry, active status).</li>
+ *   <li>{@link com.carddemo.model.CardXref} (CVACT03Y) – card/account cross-reference;
+ *       the file directly read by COBOL paragraph 1110-GET-XREF-DATA using the
+ *       alternate key FD-XREF-ACCT-ID.</li>
+ *   <li>{@link com.carddemo.model.AccountData} (CVACT01Y) – account master record.</li>
+ * </ul>
+ *
  * <h2>Job flow</h2>
  * <ol>
  *   <li>beforeStep  – resets stateful service with the run date.</li>

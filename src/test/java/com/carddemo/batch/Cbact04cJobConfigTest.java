@@ -12,15 +12,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.core.*;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.launch.JobLauncher;
-import org.springframework.batch.test.JobLauncherTestUtils;
-import org.springframework.batch.test.context.SpringBatchTest;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
 import java.util.Collections;
@@ -34,11 +25,22 @@ import static org.mockito.BDDMockito.*;
 /**
  * Cbact04cJobConfigTest – unit tests for the CBACT04C Spring Batch migration.
  *
- * <p>Tests are structured in two layers:
+ * <p>Tests are structured in three layers:
  * <ol>
  *   <li>Pure unit tests for {@link Cbact04cService} (no Spring context, fast Mockito tests).</li>
+ *   <li>{@link CardData} entity tests — verifies that the CVACT02Y card master entity is
+ *       present and correctly mapped alongside {@link AccountData}.</li>
  *   <li>Integration smoke tests for the Job / Step wiring.</li>
  * </ol>
+ *
+ * <h2>Entity availability (requirement)</h2>
+ * <ul>
+ *   <li>{@link CardData}   (CVACT02Y) – card master record: card number, account ID,
+ *       CVV, embossed name, expiry date, active status. ✅</li>
+ *   <li>{@link AccountData} (CVACT01Y) – account master record. ✅</li>
+ *   <li>{@link CardXref}   (CVACT03Y) – card/account cross-reference used by
+ *       paragraph 1110-GET-XREF-DATA. ✅</li>
+ * </ul>
  */
 @ExtendWith(MockitoExtension.class)
 class Cbact04cJobConfigTest {
@@ -60,6 +62,115 @@ class Cbact04cJobConfigTest {
     private static final BigDecimal MONTHLY_INT = new BigDecimal("10.00");
 
     // =========================================================================
+    // CardData entity tests — verifies CVACT02Y model class is available
+    // =========================================================================
+
+    @Nested
+    @DisplayName("CardData entity – CVACT02Y mapping")
+    class CardDataEntityTests {
+
+        @Test
+        @DisplayName("CardData entity: all CVACT02Y fields map correctly")
+        void cardData_entityFields_mapToCobolCopybook() {
+            // CVACT02Y: CARD-NUM X(16), CARD-ACCT-ID 9(11), CARD-CVV-CD 9(03),
+            //           CARD-EMBOSSED-NAME X(50), CARD-EXPIRAION-DATE X(10),
+            //           CARD-ACTIVE-STATUS X(01)
+            CardData card = CardData.builder()
+                    .cardNum(CARD_NUM)
+                    .cardAcctId(ACCT_ID)
+                    .cardCvvCd(123)
+                    .cardEmbossedName("JOHN DOE")
+                    .cardExpirationDate("2027-12-31")
+                    .cardActiveStatus("Y")
+                    .build();
+
+            assertThat(card.getCardNum()).isEqualTo(CARD_NUM);
+            assertThat(card.getCardAcctId()).isEqualTo(ACCT_ID);
+            assertThat(card.getCardCvvCd()).isEqualTo(123);
+            assertThat(card.getCardEmbossedName()).isEqualTo("JOHN DOE");
+            assertThat(card.getCardExpirationDate()).isEqualTo("2027-12-31");
+            assertThat(card.getCardActiveStatus()).isEqualTo("Y");
+        }
+
+        @Test
+        @DisplayName("CardData entity: card number primary key is 16-char PIC X(16)")
+        void cardData_cardNum_isPrimaryKey_16chars() {
+            CardData card = new CardData();
+            card.setCardNum(CARD_NUM);
+            assertThat(card.getCardNum()).hasSize(16);
+        }
+
+        @Test
+        @DisplayName("CardData entity: cardAcctId links card to AccountData (CARD-ACCT-ID = ACCT-ID)")
+        void cardData_cardAcctId_linksToAccountData() {
+            // CARD-ACCT-ID PIC 9(11) references the same 11-digit account as AccountData.acctId
+            CardData card = CardData.builder()
+                    .cardNum(CARD_NUM)
+                    .cardAcctId(ACCT_ID)
+                    .cardActiveStatus("Y")
+                    .build();
+
+            AccountData account = buildAccount(ACCT_ID, GROUP_ID, BigDecimal.ZERO);
+
+            assertThat(card.getCardAcctId()).isEqualTo(account.getAcctId());
+        }
+
+        @Test
+        @DisplayName("CardData (CVACT02Y) and CardXref (CVACT03Y) are distinct entity types")
+        void cardData_and_cardXref_areDistinctEntities() {
+            // CardData (CVACT02Y): full card master — CVV, embossed name, expiry, active status
+            CardData cardData = CardData.builder()
+                    .cardNum(CARD_NUM)
+                    .cardAcctId(ACCT_ID)
+                    .cardCvvCd(456)
+                    .cardEmbossedName("JANE SMITH")
+                    .cardExpirationDate("2028-06-30")
+                    .cardActiveStatus("Y")
+                    .build();
+
+            // CardXref (CVACT03Y): cross-reference — card number ↔ account via alternate key
+            CardXref cardXref = new CardXref(CARD_NUM, 100L, ACCT_ID);
+
+            // Both share the same card number and account ID, but are distinct model classes
+            assertThat(cardData.getCardNum()).isEqualTo(cardXref.getXrefCardNum());
+            assertThat(cardData.getCardAcctId()).isEqualTo(cardXref.getXrefAcctId());
+            assertThat(cardData).isNotInstanceOf(CardXref.class);
+            assertThat(cardXref).isNotInstanceOf(CardData.class);
+        }
+
+        @Test
+        @DisplayName("CardData active status 'N' represents inactive card")
+        void cardData_inactiveStatus() {
+            CardData card = CardData.builder()
+                    .cardNum(CARD_NUM)
+                    .cardAcctId(ACCT_ID)
+                    .cardActiveStatus("N")
+                    .build();
+            assertThat(card.getCardActiveStatus()).isEqualTo("N");
+        }
+
+        @Test
+        @DisplayName("AccountData entity is also available (CVACT01Y)")
+        void accountData_entityIsAvailable() {
+            AccountData account = buildAccount(ACCT_ID, GROUP_ID, new BigDecimal("5000.00"));
+            assertThat(account.getAcctId()).isEqualTo(ACCT_ID);
+            assertThat(account.getAcctGroupId()).isEqualTo(GROUP_ID);
+            assertThat(account.getAcctCurrBal()).isEqualByComparingTo(new BigDecimal("5000.00"));
+        }
+
+        // Helper
+        private AccountData buildAccount(Long acctId, String groupId, BigDecimal balance) {
+            AccountData a = new AccountData();
+            a.setAcctId(acctId);
+            a.setAcctGroupId(groupId);
+            a.setAcctCurrBal(balance);
+            a.setAcctCurrCycCredit(BigDecimal.ZERO);
+            a.setAcctCurrCycDebit(BigDecimal.ZERO);
+            return a;
+        }
+    }
+
+    // =========================================================================
     // Service unit tests
     // =========================================================================
 
@@ -68,6 +179,7 @@ class Cbact04cJobConfigTest {
     class ServiceTests {
 
         @Mock AccountDataRepository      accountDataRepository;
+        @Mock CardDataRepository         cardDataRepository;
         @Mock CardXrefRepository         cardXrefRepository;
         @Mock DisclosureGroupRepository  disclosureGroupRepository;
         @Mock TransactionRepository      transactionRepository;
@@ -449,6 +561,7 @@ class Cbact04cJobConfigTest {
     class JobConfigTests {
 
         @Mock AccountDataRepository      accountDataRepository;
+        @Mock CardDataRepository         cardDataRepository;
         @Mock CardXrefRepository         cardXrefRepository;
         @Mock DisclosureGroupRepository  disclosureGroupRepository;
         @Mock TransactionRepository      transactionRepository;

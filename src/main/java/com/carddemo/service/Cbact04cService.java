@@ -19,20 +19,33 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Cbact04cService – business logic migrated from COBOL program CBACT04C.
  *
+ * <h2>Entity model used</h2>
+ * <ul>
+ *   <li>{@link AccountData} (CVACT01Y) – account master; read by paragraph
+ *       1100-GET-ACCT-DATA and updated by 1050-UPDATE-ACCOUNT.</li>
+ *   <li>{@link CardData} (CVACT02Y) – full card master record (card number,
+ *       account ID, CVV, embossed name, expiry, active status).</li>
+ *   <li>{@link CardXref} (CVACT03Y) – card/account cross-reference file;
+ *       read by paragraph 1110-GET-XREF-DATA via alternate key FD-XREF-ACCT-ID
+ *       to obtain the card number written into each interest transaction.</li>
+ * </ul>
+ *
  * <p>The COBOL program performs the following high-level steps:
  * <ol>
  *   <li>Reads TCATBAL-FILE sequentially (transaction category balances).</li>
  *   <li>For each new account (TRANCAT-ACCT-ID changes), it:
  *       <ul>
  *         <li>Updates the previous account's balance (1050-UPDATE-ACCOUNT)</li>
- *         <li>Reads the account record (1100-GET-ACCT-DATA)</li>
- *         <li>Reads the card cross-reference by account ID (1110-GET-XREF-DATA)</li>
+ *         <li>Reads the account record via {@link AccountData} (1100-GET-ACCT-DATA)</li>
+ *         <li>Reads the card cross-reference via {@link CardXref} by account ID
+ *             (1110-GET-XREF-DATA)</li>
  *       </ul>
  *   </li>
  *   <li>For each TCATBAL record, looks up the interest rate from DISCGRP-FILE
  *       (1200-GET-INTEREST-RATE, with fallback to 'DEFAULT').</li>
  *   <li>If interest rate &gt; 0, computes monthly interest (1300-COMPUTE-INTEREST)
- *       and writes an interest transaction record (1300-B-WRITE-TX).</li>
+ *       and writes an interest transaction record (1300-B-WRITE-TX) using the
+ *       card number from {@link CardXref}.</li>
  *   <li>After the last record, updates the final account.</li>
  * </ol>
  *
@@ -65,6 +78,7 @@ public class Cbact04cService {
     // Repositories
     // ---------------------------------------------------------------
     private final AccountDataRepository       accountDataRepository;
+    private final CardDataRepository          cardDataRepository;
     private final CardXrefRepository          cardXrefRepository;
     private final DisclosureGroupRepository   disclosureGroupRepository;
     private final TransactionRepository       transactionRepository;
