@@ -1,7 +1,7 @@
 package com.carddemo.batch;
 
-import com.carddemo.model.CardData;
-import com.carddemo.model.CardUpdateRequest;
+import com.carddemo.model.AccountData;
+import com.carddemo.model.AccountUpdateRequest;
 import com.carddemo.service.Cbact02cService;
 import jakarta.persistence.EntityManagerFactory;
 import lombok.extern.slf4j.Slf4j;
@@ -30,76 +30,87 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.validation.BindException;
 
 /**
- * Spring Batch configuration for the CBACT02C card-file batch job.
+ * Spring Batch configuration for the CBACT02C account-file batch job.
  *
  * <h2>COBOL → Java Mapping</h2>
  * <pre>
- *  COBOL CBACT02C.CBL                      Java (this class)
+ *  COBOL CBACT02C.CBL                        Java (this class)
  *  ─────────────────────────────────────── ──────────────────────────────────────
- *  PERFORM 0000-CARDFILE-OPEN              FlatFileItemReader open (framework)
- *  PERFORM UNTIL END-OF-FILE = 'Y'         chunk-oriented step loop (chunk=100)
- *    PERFORM 1000-CARDFILE-GET-NEXT        FlatFileItemReader.read()
- *    IF END-OF-FILE = 'N' DISPLAY ...      Cbact02cItemProcessor.process()
- *  END-PERFORM                             (loop managed by batch framework)
- *  PERFORM 9000-CARDFILE-CLOSE             FlatFileItemReader close (framework)
- *  9999-ABEND-PROGRAM                      fault-tolerant skip / exception throw
+ *  PERFORM 0000-CARDFILE-OPEN               FlatFileItemReader open (framework)
+ *  PERFORM UNTIL END-OF-FILE = 'Y'          chunk-oriented step loop (chunk=100)
+ *    PERFORM 1000-CARDFILE-GET-NEXT         FlatFileItemReader.read()
+ *    IF END-OF-FILE = 'N' DISPLAY …         Cbact02cItemProcessor.process()
+ *  END-PERFORM                              (loop managed by batch framework)
+ *  PERFORM 9000-CARDFILE-CLOSE              FlatFileItemReader close (framework)
+ *  9999-ABEND-PROGRAM                       fault-tolerant skip / exception throw
  * </pre>
  *
- * <h2>Input File Layout (CVACT02Y copybook – 91 bytes/record)</h2>
+ * <h2>Input File Layout (CVACT01Y copybook — 96 bytes/record)</h2>
  * <pre>
- *  Cols  1-16 : CARD-NUM             PIC X(16)
- *  Cols 17-27 : CARD-ACCT-ID         PIC 9(11)
- *  Cols 28-30 : CARD-CVV-CD          PIC 9(03)
- *  Cols 31-80 : CARD-EMBOSSED-NAME   PIC X(50)
- *  Cols 81-90 : CARD-EXPIRAION-DATE  PIC X(10)
- *  Col  91    : CARD-ACTIVE-STATUS   PIC X(01)
+ *  Cols  1-11 : ACCT-ID               PIC 9(11)
+ *  Col   12   : ACCT-ACTIVE-STATUS    PIC X(01)
+ *  Cols 13-25 : ACCT-CURR-BAL         PIC S9(10)V99  (13 chars: sign+10+dot+2)
+ *  Cols 26-38 : ACCT-CREDIT-LIMIT     PIC S9(10)V99
+ *  Cols 39-51 : ACCT-CASH-CREDIT-LIMIT PIC S9(10)V99
+ *  Cols 52-61 : ACCT-OPEN-DATE        PIC X(10)
+ *  Cols 62-71 : ACCT-EXPIRAION-DATE   PIC X(10)
+ *  Cols 72-81 : ACCT-REISSUE-DATE     PIC X(10)
+ *  Cols 82-91 : ACCT-ADDR-ZIP         PIC X(10)
+ *  Cols 92-101: ACCT-GROUP-ID         PIC X(10)
  * </pre>
  *
  * <h2>COMP-3 / Arithmetic</h2>
  * COBOL COMP-3 (packed decimal) arithmetic is handled in
  * {@link Cbact02cService} using {@link java.math.BigDecimal} with
- * {@link java.math.RoundingMode#HALF_UP} rounding where applicable.
+ * {@link java.math.RoundingMode#HALF_UP} rounding, faithfully reproducing
+ * COBOL's default rounding behaviour.
  */
 @Slf4j
 @Configuration
 public class Cbact02cJobConfig {
 
     // -------------------------------------------------------------------------
-    // FieldSetMapper – custom type-safe mapping for CVACT02Y record layout
+    // FieldSetMapper – type-safe mapping for CVACT01Y account record layout
     // -------------------------------------------------------------------------
 
     /**
      * Stateless, thread-safe {@link FieldSetMapper} that converts raw
-     * fixed-width string tokens into a typed {@link CardUpdateRequest}.
+     * fixed-width string tokens into a typed {@link AccountUpdateRequest}.
      *
-     * <p>This replaces the generic {@code BeanWrapperFieldSetMapper} to
-     * avoid relying on Spring's property-editor type coercion for numeric
-     * COBOL fields (CARD-ACCT-ID PIC 9(11), CARD-CVV-CD PIC 9(03)).
+     * <p>String fields are trimmed (mirrors COBOL MOVE SPACES behaviour).
+     * Numeric string fields (balance, limits) are kept as trimmed strings
+     * so that {@link Cbact02cService} can parse them into
+     * {@link java.math.BigDecimal} with correct HALF_UP rounding.
      */
-    static class CardUpdateRequestFieldSetMapper
-            implements FieldSetMapper<CardUpdateRequest> {
+    static class AccountUpdateRequestFieldSetMapper
+            implements FieldSetMapper<AccountUpdateRequest> {
 
         @Override
-        public CardUpdateRequest mapFieldSet(FieldSet fs) throws BindException {
-            // Each readString() call preserves leading/trailing spaces for
-            // PIC X fields, mirroring COBOL MOVE SPACES behaviour.
-            String cardNum  = fs.readString(0).trim();
-            String acctRaw  = fs.readString(1).trim();
-            String cvvRaw   = fs.readString(2).trim();
-            String embName  = fs.readString(3).trim();
-            String expiry   = fs.readString(4).trim();
-            String status   = fs.readString(5).trim();
+        public AccountUpdateRequest mapFieldSet(FieldSet fs) throws BindException {
+            String acctIdRaw    = fs.readString(0).trim();
+            String status       = fs.readString(1).trim();
+            String currBal      = fs.readString(2).trim();
+            String creditLimit  = fs.readString(3).trim();
+            String cashLimit    = fs.readString(4).trim();
+            String openDate     = fs.readString(5).trim();
+            String expiryDate   = fs.readString(6).trim();
+            String reissueDate  = fs.readString(7).trim();
+            String zip          = fs.readString(8).trim();
+            String groupId      = fs.readString(9).trim();
 
-            Long    acctId = acctRaw.isEmpty()  ? null : Long.parseLong(acctRaw);
-            Integer cvv    = cvvRaw.isEmpty()   ? null : Integer.parseInt(cvvRaw);
+            Long acctId = acctIdRaw.isEmpty() ? null : Long.parseLong(acctIdRaw);
 
-            return CardUpdateRequest.builder()
-                    .cardNum(cardNum)
-                    .cardAcctId(acctId)
-                    .cardCvvCd(cvv)
-                    .cardEmbossedName(embName)
-                    .cardExpirationDate(expiry)
-                    .cardActiveStatus(status.isEmpty() ? null : status)
+            return AccountUpdateRequest.builder()
+                    .acctId(acctId)
+                    .acctActiveStatus(status.isEmpty()    ? null : status)
+                    .acctCurrBal(currBal.isEmpty()        ? null : currBal)
+                    .acctCreditLimit(creditLimit.isEmpty()? null : creditLimit)
+                    .acctCashCreditLimit(cashLimit.isEmpty()? null : cashLimit)
+                    .acctOpenDate(openDate.isEmpty()      ? null : openDate)
+                    .acctExpirationDate(expiryDate.isEmpty()? null : expiryDate)
+                    .acctReissueDate(reissueDate.isEmpty()? null : reissueDate)
+                    .acctAddrZip(zip.isEmpty()            ? null : zip)
+                    .acctGroupId(groupId.isEmpty()        ? null : groupId)
                     .build();
         }
     }
@@ -109,37 +120,41 @@ public class Cbact02cJobConfig {
     // -------------------------------------------------------------------------
 
     /**
-     * Fixed-width flat-file reader for the CARDFILE input dataset.
+     * Fixed-width flat-file reader for the account VSAM input dataset.
      * The file path is injected from job parameter {@code inputFile}.
      *
-     * <p>{@code strict(false)} allows lines longer than the declared 91-char
-     * range (e.g. lines with trailing CR/LF or padding) without throwing an
-     * {@code IncorrectLineLengthException}, mirroring COBOL's tolerance of
-     * FILLER bytes beyond the last defined field.
+     * <p>{@code strict(false)} allows records with trailing padding beyond the
+     * declared 101-character range (mirroring COBOL FILLER tolerance) without
+     * throwing {@code IncorrectLineLengthException}.
      */
     @Bean
     @StepScope
-    public FlatFileItemReader<CardUpdateRequest> cbact02cItemReader(
+    public FlatFileItemReader<AccountUpdateRequest> cbact02cItemReader(
             @Value("#{jobParameters['inputFile']}") Resource inputFile) {
 
-        return new FlatFileItemReaderBuilder<CardUpdateRequest>()
+        return new FlatFileItemReaderBuilder<AccountUpdateRequest>()
                 .name("cbact02cItemReader")
                 .resource(inputFile)
-                .strict(false)         // tolerate lines with trailing padding
+                .strict(false)
                 .fixedLength()
                     .columns(
-                        new Range(1,  16),  // CARD-NUM
-                        new Range(17, 27),  // CARD-ACCT-ID
-                        new Range(28, 30),  // CARD-CVV-CD
-                        new Range(31, 80),  // CARD-EMBOSSED-NAME
-                        new Range(81, 90),  // CARD-EXPIRAION-DATE
-                        new Range(91, 91)   // CARD-ACTIVE-STATUS
+                        new Range(1,  11),  // ACCT-ID
+                        new Range(12, 12),  // ACCT-ACTIVE-STATUS
+                        new Range(13, 25),  // ACCT-CURR-BAL
+                        new Range(26, 38),  // ACCT-CREDIT-LIMIT
+                        new Range(39, 51),  // ACCT-CASH-CREDIT-LIMIT
+                        new Range(52, 61),  // ACCT-OPEN-DATE
+                        new Range(62, 71),  // ACCT-EXPIRAION-DATE
+                        new Range(72, 81),  // ACCT-REISSUE-DATE
+                        new Range(82, 91),  // ACCT-ADDR-ZIP
+                        new Range(92, 101)  // ACCT-GROUP-ID
                     )
-                    .names("cardNum", "cardAcctId", "cardCvvCd",
-                           "cardEmbossedName", "cardExpirationDate",
-                           "cardActiveStatus")
-                    .fieldSetMapper(new CardUpdateRequestFieldSetMapper())
-                    .strict(false)     // FixedLengthTokenizer strict=false
+                    .names("acctId", "acctActiveStatus", "acctCurrBal",
+                           "acctCreditLimit", "acctCashCreditLimit",
+                           "acctOpenDate", "acctExpirationDate",
+                           "acctReissueDate", "acctAddrZip", "acctGroupId")
+                    .fieldSetMapper(new AccountUpdateRequestFieldSetMapper())
+                    .strict(false)
                 .build();
     }
 
@@ -148,26 +163,27 @@ public class Cbact02cJobConfig {
     // -------------------------------------------------------------------------
 
     /**
-     * Item processor: delegates to {@link Cbact02cService#processCardUpdate}
-     * which preserves all COBOL IF/EVALUATE validation logic.
+     * Item processor: delegates to {@link Cbact02cService#processAccountUpdate}
+     * which preserves all COBOL IF/EVALUATE validation and arithmetic logic.
      *
      * <p>Returns {@code null} (skip) for structurally blank lines.
-     * Re-throws {@link Cbact02cService.CardFileProcessingException} so the
-     * fault-tolerant step skip policy can decide the outcome.
+     * Re-throws {@link Cbact02cService.AccountFileProcessingException} so the
+     * fault-tolerant step skip policy can decide the outcome, mirroring the
+     * COBOL {@code 9999-ABEND-PROGRAM} path.
      */
     @Bean
-    public ItemProcessor<CardUpdateRequest, CardData> cbact02cItemProcessor(
+    public ItemProcessor<AccountUpdateRequest, AccountData> cbact02cItemProcessor(
             Cbact02cService cbact02cService) {
 
         return request -> {
             // Filter out completely blank records (COBOL SPACE-FILLED lines)
-            if (request.getCardNum() == null || request.getCardNum().isBlank()) {
-                log.debug("CBACT02C – skipping blank record");
+            if (request.getAcctId() == null) {
+                log.debug("CBACT02C – skipping blank account record");
                 return null;
             }
             try {
-                return cbact02cService.processCardUpdate(request);
-            } catch (Cbact02cService.CardFileProcessingException ex) {
+                return cbact02cService.processAccountUpdate(request);
+            } catch (Cbact02cService.AccountFileProcessingException ex) {
                 log.error("CBACT02C – processing error [APPL-RESULT={}]: {}",
                           ex.getApplResult(), ex.getMessage());
                 throw ex;   // honour fault-tolerant skip policy
@@ -176,55 +192,58 @@ public class Cbact02cJobConfig {
     }
 
     // -------------------------------------------------------------------------
-    // Writer – JpaItemWriter persists updated CardData entities
+    // Writer – JpaItemWriter persists updated AccountData entities
     // -------------------------------------------------------------------------
 
     /**
      * JPA item writer calling {@code EntityManager.merge()} per chunk.
-     * This is equivalent to the COBOL {@code REWRITE} verb that overwrites
+     *
+     * <p>This is equivalent to the COBOL {@code REWRITE} verb that overwrites
      * an existing VSAM record with updated working-storage content.
+     * {@code usePersist(false)} ensures merge (upsert) semantics so that
+     * both new and existing account records are handled correctly.
      */
     @Bean
-    public JpaItemWriter<CardData> cbact02cItemWriter(
+    public JpaItemWriter<AccountData> cbact02cItemWriter(
             EntityManagerFactory entityManagerFactory) {
 
-        return new JpaItemWriterBuilder<CardData>()
+        return new JpaItemWriterBuilder<AccountData>()
                 .entityManagerFactory(entityManagerFactory)
                 .usePersist(false)   // merge = upsert, mirrors COBOL REWRITE
                 .build();
     }
 
     // -------------------------------------------------------------------------
-    // Step – chunk-oriented, transactional
+    // Step – chunk-oriented, @Transactional per chunk
     // -------------------------------------------------------------------------
 
     /**
-     * Single step for the CBACT02C job.
+     * Single transactional step for the CBACT02C job.
      *
-     * <p>Chunk size 100 is a reasonable default matching a VSAM block size.
-     * Spring Batch wraps each chunk commit in a transaction provided by the
-     * injected {@link PlatformTransactionManager}, fulfilling the
-     * {@code @Transactional} requirement.
+     * <p>Chunk size 100 is a reasonable default matching a typical VSAM block
+     * size. Spring Batch wraps each chunk commit in a transaction provided by
+     * the injected {@link PlatformTransactionManager}, satisfying the
+     * {@code @Transactional} step requirement.
      *
      * <p>Skip policy: up to 10 non-fatal
-     * {@link Cbact02cService.CardFileProcessingException} per run, mirroring
+     * {@link Cbact02cService.AccountFileProcessingException} per run, mirroring
      * the COBOL practice of logging bad records (DISPLAY) and continuing.
      */
     @Bean
     public Step cbact02cStep(
             JobRepository jobRepository,
             PlatformTransactionManager transactionManager,
-            FlatFileItemReader<CardUpdateRequest> cbact02cItemReader,
-            ItemProcessor<CardUpdateRequest, CardData> cbact02cItemProcessor,
-            JpaItemWriter<CardData> cbact02cItemWriter) {
+            FlatFileItemReader<AccountUpdateRequest> cbact02cItemReader,
+            ItemProcessor<AccountUpdateRequest, AccountData> cbact02cItemProcessor,
+            JpaItemWriter<AccountData> cbact02cItemWriter) {
 
         return new StepBuilder("cbact02cStep", jobRepository)
-                .<CardUpdateRequest, CardData>chunk(100, transactionManager)
+                .<AccountUpdateRequest, AccountData>chunk(100, transactionManager)
                 .reader(cbact02cItemReader)
                 .processor(cbact02cItemProcessor)
                 .writer(cbact02cItemWriter)
                 .faultTolerant()
-                    .skip(Cbact02cService.CardFileProcessingException.class)
+                    .skip(Cbact02cService.AccountFileProcessingException.class)
                     .skipLimit(10)
                 .listener(new Cbact02cStepListener())
                 .build();
@@ -235,7 +254,7 @@ public class Cbact02cJobConfig {
     // -------------------------------------------------------------------------
 
     /**
-     * Spring Batch Job definition for CBACT02C.
+     * Spring Batch Job definition for CBACT02C account data file update.
      *
      * <p>A {@link RunIdIncrementer} allows the job to be re-submitted for
      * each new run (mirrors the COBOL batch scheduler re-run capability).
@@ -257,8 +276,8 @@ public class Cbact02cJobConfig {
 
     /**
      * Step listener that prints start/end messages mirroring the COBOL
-     * {@code DISPLAY 'START OF EXECUTION...'} and
-     * {@code DISPLAY 'END OF EXECUTION...'} statements.
+     * {@code DISPLAY 'START OF EXECUTION OF PROGRAM CBACT02C'} and
+     * {@code DISPLAY 'END OF EXECUTION OF PROGRAM CBACT02C'} statements.
      */
     static class Cbact02cStepListener implements StepExecutionListener {
 

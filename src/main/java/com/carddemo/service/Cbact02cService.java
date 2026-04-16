@@ -1,24 +1,26 @@
 package com.carddemo.service;
 
-import com.carddemo.model.CardData;
-import com.carddemo.model.CardUpdateRequest;
-import com.carddemo.repository.CardDataRepository;
+import com.carddemo.model.AccountData;
+import com.carddemo.model.AccountUpdateRequest;
+import com.carddemo.repository.AccountDataRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Optional;
 
 /**
- * Business-logic service for the CBACT02C card-file batch migration.
+ * Business-logic service for the CBACT02C account-file batch migration.
  *
  * <h2>COBOL Mapping</h2>
  * The original {@code CBACT02C.CBL} performs a sequential READ of the
- * CARDFILE VSAM KSDS (indexed by CARD-NUM) and DISPLAYs each record.
+ * account VSAM KSDS (indexed by ACCT-ID) and DISPLAYs each record.
  * In the modernised architecture the READ-and-update pattern is expressed
- * here: each {@link CardUpdateRequest} item (read from a flat file or DB
- * staging table) is validated, looked up by its primary key, and all
+ * here: each {@link AccountUpdateRequest} item (read from a flat file or
+ * DB staging table) is validated, looked up by its primary key, and all
  * non-null fields from the request are applied to the persisted entity.
  *
  * <h2>Error Handling (mirrors COBOL ABEND logic)</h2>
@@ -27,78 +29,98 @@ import java.util.Optional;
  *   <li>FILE STATUS '10' → {@code APPL-RESULT = 16} → end-of-file
  *       (handled by batch framework exhaustion)</li>
  *   <li>Any other status → {@code APPL-RESULT = 12} → ABEND →
- *       throw {@link CardFileProcessingException}</li>
+ *       throw {@link AccountFileProcessingException}</li>
  * </ul>
+ *
+ * <h2>COMP-3 Arithmetic</h2>
+ * All COBOL COMP-3 (packed decimal) fields — {@code ACCT-CURR-BAL},
+ * {@code ACCT-CREDIT-LIMIT}, {@code ACCT-CASH-CREDIT-LIMIT},
+ * {@code ACCT-CURR-CYC-CREDIT}, {@code ACCT-CURR-CYC-DEBIT} — are
+ * represented as {@link BigDecimal} with scale 2 and
+ * {@link RoundingMode#HALF_UP}, which is the standard COBOL rounding mode
+ * for packed-decimal arithmetic.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class Cbact02cService {
 
-    private final CardDataRepository cardDataRepository;
+    private final AccountDataRepository accountDataRepository;
 
     // -----------------------------------------------------------------------
-    // Constants mirroring COBOL condition-names
+    // Constants mirroring COBOL condition-names (88-levels)
     // -----------------------------------------------------------------------
-    private static final int APPL_AOK  = 0;   // 88 APPL-AOK  VALUE 0
-    private static final int APPL_EOF  = 16;  // 88 APPL-EOF  VALUE 16
-    private static final int APPL_ERR  = 12;  // error / ABEND result
+    /** 88 APPL-AOK VALUE 0 */
+    private static final int APPL_AOK = 0;
+    /** 88 APPL-EOF VALUE 16 */
+    private static final int APPL_EOF = 16;
+    /** ABEND / error result code */
+    private static final int APPL_ERR = 12;
+
+    /** Scale for all COBOL COMP-3 monetary fields (PIC S9(10)V99 → 2 decimals). */
+    private static final int MONETARY_SCALE = 2;
+
+    /** COBOL rounding mode for all COMP-3 arithmetic. */
+    private static final RoundingMode COBOL_ROUNDING = RoundingMode.HALF_UP;
 
     // -----------------------------------------------------------------------
     // Public API
     // -----------------------------------------------------------------------
 
     /**
-     * Process a single {@link CardUpdateRequest}.
+     * Process a single {@link AccountUpdateRequest}.
      *
-     * <p>Logic mirrors the COBOL 1000-CARDFILE-GET-NEXT / REWRITE pattern:
+     * <p>Logic mirrors the COBOL 1000-CARDFILE-GET-NEXT / REWRITE pattern
+     * applied to the account VSAM dataset:
      * <ol>
-     *   <li>Look up the card record by CARD-NUM (primary key).</li>
+     *   <li>Validate the primary key (ACCT-ID) – ABEND if blank.</li>
+     *   <li>Look up the account record by ACCT-ID.</li>
      *   <li>If not found, treat as a new insert (upsert semantics).</li>
      *   <li>Apply field updates following the EVALUATE / IF logic.</li>
-     *   <li>Persist and return the updated entity.</li>
+     *   <li>Apply COMP-3 arithmetic with HALF_UP rounding.</li>
+     *   <li>Persist and return the updated {@link AccountData} entity.</li>
      * </ol>
      *
      * @param request update request derived from input file record
-     * @return the persisted/updated {@link CardData} entity
-     * @throws CardFileProcessingException if mandatory key is absent (ABEND path)
+     * @return the persisted/updated {@link AccountData} entity
+     * @throws AccountFileProcessingException if mandatory key is absent (ABEND path)
      */
     @Transactional
-    public CardData processCardUpdate(CardUpdateRequest request) {
-        validateRequest(request);                     // ABEND on bad input
+    public AccountData processAccountUpdate(AccountUpdateRequest request) {
+        validateRequest(request);                         // ABEND on bad input
 
-        Optional<CardData> existing =
-                cardDataRepository.findById(request.getCardNum());
+        Optional<AccountData> existing =
+                accountDataRepository.findById(request.getAcctId());
 
-        CardData card = existing.orElseGet(() -> {
-            log.info("CBACT02C – new card record, inserting: cardNum={}",
-                     request.getCardNum());
-            return CardData.builder()
-                           .cardNum(request.getCardNum())
-                           .build();
+        AccountData account = existing.orElseGet(() -> {
+            log.info("CBACT02C – new account record, inserting: acctId={}",
+                     request.getAcctId());
+            return AccountData.builder()
+                              .acctId(request.getAcctId())
+                              .build();
         });
 
-        applyUpdates(card, request);                  // COBOL MOVE / IF logic
+        applyUpdates(account, request);   // COBOL MOVE / EVALUATE / COMPUTE logic
 
-        CardData saved = cardDataRepository.save(card);
-        log.debug("CBACT02C – saved cardNum={} acctId={}",
-                  saved.getCardNum(), saved.getCardAcctId());
+        AccountData saved = accountDataRepository.save(account);
+        log.debug("CBACT02C – saved acctId={} status={}",
+                  saved.getAcctId(), saved.getAcctActiveStatus());
         return saved;
     }
 
     /**
-     * Retrieve a card record by card number.
-     * Corresponds to a random-access READ of the VSAM KSDS.
+     * Retrieve an account record by account ID.
+     * Corresponds to a random-access READ of the account VSAM KSDS.
      *
-     * @param cardNum card number (CARD-NUM PIC X(16))
-     * @return the {@link CardData} entity
-     * @throws CardFileProcessingException when card not found (APPL-RESULT=12)
+     * @param acctId account identifier (ACCT-ID PIC 9(11))
+     * @return the {@link AccountData} entity
+     * @throws AccountFileProcessingException when account not found (APPL-RESULT=12)
      */
     @Transactional(readOnly = true)
-    public CardData getCard(String cardNum) {
-        return cardDataRepository.findById(cardNum)
-                .orElseThrow(() -> new CardFileProcessingException(
-                        "ERROR READING CARDFILE – card not found: " + cardNum,
+    public AccountData getAccount(Long acctId) {
+        return accountDataRepository.findById(acctId)
+                .orElseThrow(() -> new AccountFileProcessingException(
+                        "ERROR READING ACCOUNT FILE – account not found: " + acctId,
                         APPL_ERR));
     }
 
@@ -108,63 +130,127 @@ public class Cbact02cService {
 
     /**
      * Validate that mandatory fields are present.
-     * COBOL ABEND path (APPL-RESULT = 12) when CARD-NUM is blank.
+     *
+     * <p>Maps to the COBOL ABEND path (APPL-RESULT = 12) when ACCT-ID is zero/blank.
+     * Equivalent to:
+     * <pre>
+     *   IF ACCT-ID = ZERO
+     *       DISPLAY 'ERROR READING ACCOUNT FILE'
+     *       PERFORM 9999-ABEND-PROGRAM
+     *   END-IF
+     * </pre>
      */
-    private void validateRequest(CardUpdateRequest request) {
-        if (request == null || request.getCardNum() == null
-                || request.getCardNum().isBlank()) {
-            throw new CardFileProcessingException(
-                    "ERROR READING CARDFILE – CARD-NUM is required", APPL_ERR);
+    private void validateRequest(AccountUpdateRequest request) {
+        if (request == null || request.getAcctId() == null
+                || request.getAcctId() <= 0) {
+            throw new AccountFileProcessingException(
+                    "ERROR READING ACCOUNT FILE – ACCT-ID is required", APPL_ERR);
         }
     }
 
     /**
-     * Apply field-level updates from the request to the entity.
+     * Apply field-level updates from the request to the {@link AccountData} entity.
      *
-     * <p>Mirrors the COBOL EVALUATE / IF block that conditionally MOVEs
-     * incoming values to the working-storage CARD-RECORD area before REWRITE:
+     * <h3>COBOL EVALUATE / IF logic preserved</h3>
      * <ul>
-     *   <li>Non-null / non-blank values overwrite the existing field.</li>
+     *   <li>Non-null / non-blank values overwrite the existing field
+     *       (COBOL: {@code MOVE ws-field TO ACCOUNT-RECORD}).</li>
      *   <li>Null values in the request leave the existing field unchanged
-     *       (idempotent partial-update semantics).</li>
-     *   <li>CARD-ACTIVE-STATUS is constrained to 'Y' or 'N'; any other
-     *       value is treated as 'N' (COBOL default / INITIALIZE).</li>
+     *       (idempotent partial-update, mirrors COBOL 88-level guard conditions).</li>
+     *   <li>{@code ACCT-ACTIVE-STATUS} – EVALUATE: only 'Y' or 'N' accepted;
+     *       any other value defaults to 'N' (COBOL WHEN OTHER clause).</li>
+     *   <li>All monetary fields are parsed and stored as
+     *       {@link BigDecimal} (scale 2, HALF_UP), representing COMP-3
+     *       packed-decimal arithmetic.</li>
      * </ul>
+     *
+     * @param account the JPA entity to update
+     * @param request the inbound update request
      */
-    private void applyUpdates(CardData card, CardUpdateRequest request) {
-        // CARD-ACCT-ID: apply if present
-        if (request.getCardAcctId() != null) {
-            card.setCardAcctId(request.getCardAcctId());
+    private void applyUpdates(AccountData account, AccountUpdateRequest request) {
+
+        // ACCT-ACTIVE-STATUS EVALUATE:
+        //   WHEN 'Y'     MOVE 'Y' TO ACCT-ACTIVE-STATUS
+        //   WHEN 'N'     MOVE 'N' TO ACCT-ACTIVE-STATUS
+        //   WHEN OTHER   MOVE 'N' TO ACCT-ACTIVE-STATUS  (default/INITIALIZE)
+        if (request.getAcctActiveStatus() != null) {
+            String status = request.getAcctActiveStatus().toUpperCase().trim();
+            account.setAcctActiveStatus("Y".equals(status) ? "Y" : "N");
         }
 
-        // CARD-CVV-CD: apply if present
-        if (request.getCardCvvCd() != null) {
-            card.setCardCvvCd(request.getCardCvvCd());
+        // ACCT-CURR-BAL – COMP-3 PIC S9(10)V99 → BigDecimal HALF_UP
+        if (request.getAcctCurrBal() != null && !request.getAcctCurrBal().isBlank()) {
+            account.setAcctCurrBal(parseMonetary(request.getAcctCurrBal(), "ACCT-CURR-BAL"));
         }
 
-        // CARD-EMBOSSED-NAME: apply if non-blank (mirrors COBOL SPACE check)
-        if (request.getCardEmbossedName() != null
-                && !request.getCardEmbossedName().isBlank()) {
-            card.setCardEmbossedName(
-                    truncate(request.getCardEmbossedName(), 50));
+        // ACCT-CREDIT-LIMIT – COMP-3 PIC S9(10)V99 → BigDecimal HALF_UP
+        if (request.getAcctCreditLimit() != null
+                && !request.getAcctCreditLimit().isBlank()) {
+            account.setAcctCreditLimit(
+                    parseMonetary(request.getAcctCreditLimit(), "ACCT-CREDIT-LIMIT"));
         }
 
-        // CARD-EXPIRAION-DATE: apply if non-blank
-        if (request.getCardExpirationDate() != null
-                && !request.getCardExpirationDate().isBlank()) {
-            card.setCardExpirationDate(
-                    truncate(request.getCardExpirationDate(), 10));
+        // ACCT-CASH-CREDIT-LIMIT – COMP-3 PIC S9(10)V99 → BigDecimal HALF_UP
+        if (request.getAcctCashCreditLimit() != null
+                && !request.getAcctCashCreditLimit().isBlank()) {
+            account.setAcctCashCreditLimit(
+                    parseMonetary(request.getAcctCashCreditLimit(), "ACCT-CASH-CREDIT-LIMIT"));
         }
 
-        // CARD-ACTIVE-STATUS: EVALUATE – only 'Y'/'N' are valid values
-        if (request.getCardActiveStatus() != null) {
-            String status = request.getCardActiveStatus().toUpperCase().trim();
-            // EVALUATE CARD-ACTIVE-STATUS
-            //   WHEN 'Y'  MOVE 'Y' TO CARD-ACTIVE-STATUS
-            //   WHEN 'N'  MOVE 'N' TO CARD-ACTIVE-STATUS
-            //   WHEN OTHER MOVE 'N' TO CARD-ACTIVE-STATUS
-            card.setCardActiveStatus(
-                    "Y".equals(status) ? "Y" : "N");
+        // ACCT-OPEN-DATE PIC X(10)
+        if (request.getAcctOpenDate() != null
+                && !request.getAcctOpenDate().isBlank()) {
+            account.setAcctOpenDate(truncate(request.getAcctOpenDate(), 10));
+        }
+
+        // ACCT-EXPIRAION-DATE PIC X(10)  (COBOL spelling preserved)
+        if (request.getAcctExpirationDate() != null
+                && !request.getAcctExpirationDate().isBlank()) {
+            account.setAcctExpirationDate(truncate(request.getAcctExpirationDate(), 10));
+        }
+
+        // ACCT-REISSUE-DATE PIC X(10)
+        if (request.getAcctReissueDate() != null
+                && !request.getAcctReissueDate().isBlank()) {
+            account.setAcctReissueDate(truncate(request.getAcctReissueDate(), 10));
+        }
+
+        // ACCT-ADDR-ZIP PIC X(10)
+        if (request.getAcctAddrZip() != null
+                && !request.getAcctAddrZip().isBlank()) {
+            account.setAcctAddrZip(truncate(request.getAcctAddrZip(), 10));
+        }
+
+        // ACCT-GROUP-ID PIC X(10)
+        if (request.getAcctGroupId() != null
+                && !request.getAcctGroupId().isBlank()) {
+            account.setAcctGroupId(truncate(request.getAcctGroupId(), 10));
+        }
+    }
+
+    /**
+     * Parse a monetary string to {@link BigDecimal} with scale 2 and HALF_UP rounding.
+     *
+     * <p>Mirrors COBOL COMP-3 packed-decimal arithmetic:
+     * <pre>
+     *   COMPUTE ACCT-CURR-BAL ROUNDED = input-value
+     * </pre>
+     * Uses {@link RoundingMode#HALF_UP} — the default COBOL rounding mode.
+     *
+     * @param value  the string value from the input record
+     * @param fieldName COBOL field name for error messages
+     * @return BigDecimal with scale=2 and HALF_UP rounding
+     * @throws AccountFileProcessingException on parse failure (ABEND path)
+     */
+    BigDecimal parseMonetary(String value, String fieldName) {
+        try {
+            return new BigDecimal(value)
+                    .setScale(MONETARY_SCALE, COBOL_ROUNDING);
+        } catch (NumberFormatException e) {
+            throw new AccountFileProcessingException(
+                    "ERROR READING ACCOUNT FILE – invalid " + fieldName
+                            + " value: [" + value + "]",
+                    APPL_ERR);
         }
     }
 
@@ -179,18 +265,27 @@ public class Cbact02cService {
     // -----------------------------------------------------------------------
 
     /**
-     * Unchecked exception thrown when the card-file processing encounters a
-     * fatal error, equivalent to the COBOL {@code 9999-ABEND-PROGRAM} routine.
+     * Unchecked exception thrown when the account-file processing encounters
+     * a fatal error, equivalent to the COBOL {@code 9999-ABEND-PROGRAM}
+     * routine invoked when APPL-RESULT is neither APPL-AOK nor APPL-EOF.
      */
-    public static class CardFileProcessingException extends RuntimeException {
+    public static class AccountFileProcessingException extends RuntimeException {
+
         private final int applResult;
 
-        public CardFileProcessingException(String message, int applResult) {
+        public AccountFileProcessingException(String message, int applResult) {
             super(message);
             this.applResult = applResult;
         }
 
-        /** Returns the COBOL APPL-RESULT code (12 = error, 16 = EOF). */
+        /**
+         * Returns the COBOL APPL-RESULT code:
+         * <ul>
+         *   <li>0  = APPL-AOK  (success)</li>
+         *   <li>12 = error / ABEND</li>
+         *   <li>16 = APPL-EOF  (end of file)</li>
+         * </ul>
+         */
         public int getApplResult() {
             return applResult;
         }
