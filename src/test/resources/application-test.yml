@@ -1,0 +1,31 @@
+# Test-profile application properties for CBACT02C batch tests
+# Uses H2 in-memory database so no external PostgreSQL is required.
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+  flyway:
+    enabled: false          # DDL managed by Hibernate create-drop in tests
+
+  batch:
+    job:
+      enabled: false        # Jobs launched programmatically in tests
+    jdbc:
+      initialize-schema: always
+
+logging:
+  level:
+    com.carddemo: DEBUG
+    org.springframework.batch: INFO
